@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Databases
+*.db
+hostel_data.csv
+
+# IDEs
+.idea/
+.vscode/
+
+# Environment
+.env

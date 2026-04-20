@@ -5,7 +5,18 @@ import hashlib
 from datetime import datetime
 import os
 
-# 🔴 FIX FOR RENDER - Use /tmp directory
+# 🔴 POSTGRESQL SUPPORT
+DATABASE_URL = os.environ.get('DATABASE_URL')
+IS_POSTGRES = DATABASE_URL is not None
+
+if IS_POSTGRES:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    print("🐘 Using PostgreSQL Database")
+else:
+    print("📁 Using SQLite Database")
+
+# 🔴 FIX FOR RENDER/LOCAL SQLITE
 def get_db_path():
     """Get database path - works on Render and local"""
     if os.environ.get('RENDER'):
@@ -16,157 +27,145 @@ def get_db_path():
 DB_NAME = get_db_path()
 
 def get_db_connection():
-    """Create database connection with row factory"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Create database connection (Postgres or SQLite)"""
+    if IS_POSTGRES:
+        # PostgreSQL Connection
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    else:
+        # SQLite Connection
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def get_cursor(conn):
+    """Get appropriate cursor"""
+    if IS_POSTGRES:
+        return conn.cursor(cursor_factory=RealDictCursor)
+    else:
+        return conn.cursor()
+
+def format_query(query):
+    """Replace ? with %s if using Postgres"""
+    if IS_POSTGRES:
+        return query.replace('?', '%s')
+    return query
 
 def init_database():
     """Initialize database tables"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = get_cursor(conn)
+    
+    # Use SERIAL for Postgres, AUTOINCREMENT for SQLite
+    id_type = "SERIAL PRIMARY KEY" if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    text_type = "TEXT"
+    timestamp_type = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
     
     # Applications table
-    cursor.execute('''
+    cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS applications (
-            app_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            applicant_name TEXT NOT NULL,
-            designation TEXT,
-            applicant_type TEXT,
-            mobile TEXT,
-            email TEXT,
-            purpose TEXT,
-            referred_by TEXT,
-            remarks TEXT,
-            guest_details TEXT DEFAULT '[]',
-            from_date TEXT,
-            to_date TEXT,
+            app_id {id_type},
+            applicant_name {text_type} NOT NULL,
+            designation {text_type},
+            applicant_type {text_type},
+            mobile {text_type},
+            email {text_type},
+            purpose {text_type},
+            referred_by {text_type},
+            remarks {text_type},
+            guest_details {text_type} DEFAULT '[]',
+            from_date {text_type},
+            to_date {text_type},
             rooms_required INTEGER DEFAULT 1,
-            messing_required TEXT DEFAULT 'No',
-            billing_person TEXT,
-            signature TEXT,
-            status TEXT DEFAULT 'Pending',
-            submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            approved_by TEXT,
+            messing_required {text_type} DEFAULT 'No',
+            billing_person {text_type},
+            signature {text_type},
+            status {text_type} DEFAULT 'Pending',
+            submitted_date {timestamp_type},
+            approved_by {text_type},
             approved_date TIMESTAMP,
             check_in_date TIMESTAMP,
             check_out_date TIMESTAMP,
-            room_status TEXT DEFAULT 'Booked'
+            room_status {text_type} DEFAULT 'Booked'
         )
     ''')
     
-    # Add new columns if they don't exist (for existing databases)
-    try:
-        cursor.execute("ALTER TABLE applications ADD COLUMN check_in_date TIMESTAMP")
-    except:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE applications ADD COLUMN check_out_date TIMESTAMP")
-    except:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE applications ADD COLUMN room_status TEXT DEFAULT 'Booked'")
-    except:
-        pass
-    
-    # 🔴 ADMIN TABLE - CRITICAL FOR LOGIN
-    cursor.execute('''
+    # 🔴 ADMIN TABLE
+    cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS admin (
-            admin_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            full_name TEXT,
-            email TEXT
+            admin_id {id_type},
+            username {text_type} UNIQUE NOT NULL,
+            password {text_type} NOT NULL,
+            full_name {text_type},
+            email {text_type}
         )
     ''')
     
     # 🔴 Insert default admin if not exists
-    cursor.execute("SELECT * FROM admin WHERE username='admin'")
+    check_query = format_query("SELECT * FROM admin WHERE username=?")
+    cursor.execute(check_query, ('admin',))
     if not cursor.fetchone():
         hashed = hashlib.sha256("admin123".encode()).hexdigest()
-        cursor.execute('''
+        insert_query = format_query('''
             INSERT INTO admin (username, password, full_name, email)
             VALUES (?, ?, ?, ?)
-        ''', ('admin', hashed, 'Administrator', 'admin@diat.ac.in'))
+        ''')
+        cursor.execute(insert_query, ('admin', hashed, 'Administrator', 'admin@diat.ac.in'))
         print("✅ Default admin user created")
     
     conn.commit()
     
-    # Check if we have any applications, if not add sample data
+    # Check if we have any applications
     cursor.execute("SELECT COUNT(*) as count FROM applications")
-    count = cursor.fetchone()['count']
+    res = cursor.fetchone()
+    count = res['count'] if isinstance(res, dict) else res[0]
     
     if count == 0:
         print("📝 Adding sample applications...")
         add_sample_applications(conn)
     
     conn.close()
-    print(f"✅ Database initialized successfully at {DB_NAME}")
+    print(f"✅ Database initialized successfully")
 
 def add_sample_applications(conn):
     """Add sample applications for testing"""
-    cursor = conn.cursor()
+    cursor = get_cursor(conn)
     
-    # Sample guests with adults and children
-    guests1 = json.dumps([
-        {'name': 'Dr. Rajesh Kumar', 'age_sex': '45/M', 'guest_type': 'Adult', 'nationality': 'Indian', 
-         'aadhaar': '1234-5678-9012', 'contact': '9876543210'},
-        {'name': 'Riya Kumar', 'age_sex': '10/F', 'guest_type': 'Child', 'nationality': 'Indian', 
-         'aadhaar': '2345-6789-0123', 'contact': '9876543211'}
-    ])
-    
-    guests2 = json.dumps([
-        {'name': 'Prof. Suresh Verma', 'age_sex': '55/M', 'guest_type': 'Adult', 'nationality': 'Indian', 
-         'aadhaar': '2345-6789-0123', 'contact': '9876543211'},
-        {'name': 'Mrs. Anjali Verma', 'age_sex': '50/F', 'guest_type': 'Adult', 'nationality': 'Indian', 
-         'aadhaar': '3456-7890-1234', 'contact': '9876543212'},
-        {'name': 'Master Arjun Verma', 'age_sex': '8/M', 'guest_type': 'Child', 'nationality': 'Indian', 
-         'aadhaar': '4567-8901-2345', 'contact': '9876543213'}
-    ])
-    
-    guests3 = json.dumps([])  # No guests
+    guests1 = json.dumps([{'name': 'Dr. Rajesh Kumar', 'guest_type': 'Adult'}])
     
     # Insert sample data
     sample_apps = [
         ('Dr. Rajesh Kumar', 'Serving DRDO', '9876543210', 'rajesh@drdo.in',
          'Research Meeting', 'Dr. Sharma', 'Urgent', guests1,
-         '15-03-2026 10:00', '18-03-2026 18:00', 1, 'No', 'Self', 'Dr. Rajesh Kumar', 'Pending', 'Booked'),
-        
-        ('Prof. Suresh Verma', 'Retired DRDO', '9876543211', 'suresh@email.com',
-         'Conference', 'Dr. Patil', 'Guest lecture', guests2,
-         '20-03-2026 09:00', '22-03-2026 17:00', 2, 'Yes', 'Organization', 'Prof. Suresh Verma', 'Approved', 'Booked'),
-        
-        ('Ms. Priya Singh', 'Other Govt Emp.', '9876543212', 'priya@gov.in',
-         'Training Program', 'Col. Mehta', '', guests3,
-         '25-03-2026 14:00', '28-03-2026 11:00', 1, 'No', 'Self', 'Ms. Priya Singh', 'Pending', 'Booked')
+         '15-03-2026 10:00', '18-03-2026 18:00', 1, 'No', 'Self', 'Dr. Rajesh Kumar', 'Pending', 'Booked')
     ]
     
     for app in sample_apps:
-        cursor.execute('''
+        query = format_query('''
             INSERT INTO applications (
                 applicant_name, applicant_type, mobile, email, purpose,
                 referred_by, remarks, guest_details, from_date, to_date,
                 rooms_required, messing_required, billing_person, signature, status, room_status
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', app)
+        ''')
+        cursor.execute(query, app)
     
     conn.commit()
-    print("✅ Sample applications added!")
 
 def insert_application(form_data, guest_list):
     """Insert new application"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = get_cursor(conn)
     
-    cursor.execute('''
+    query = format_query('''
         INSERT INTO applications (
             applicant_name, designation, applicant_type, mobile, email,
             purpose, referred_by, remarks, guest_details, from_date,
             to_date, rooms_required, messing_required, billing_person, signature
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
+    ''')
+    
+    cursor.execute(query, (
         form_data.get('applicant_name', ''),
         form_data.get('designation', ''),
         form_data.get('applicant_type', ''),
@@ -184,218 +183,185 @@ def insert_application(form_data, guest_list):
         form_data.get('signature', '')
     ))
     
-    app_id = cursor.lastrowid
+    # Get last ID
+    if IS_POSTGRES:
+        cursor.execute("SELECT LASTVAL()")
+        app_id = cursor.fetchone()['lastval']
+    else:
+        app_id = cursor.lastrowid
+        
     conn.commit()
     conn.close()
     return app_id
 
 def get_all_applications():
-    """Get all applications with guest count"""
+    """Get all applications"""
     conn = get_db_connection()
+    cursor = get_cursor(conn)
     
     try:
-        applications = conn.execute('''
-            SELECT 
-                app_id,
-                applicant_name,
-                mobile,
-                from_date,
-                to_date,
-                rooms_required,
-                status,
-                submitted_date,
-                guest_details,
-                room_status,
-                check_in_date,
-                check_out_date
-            FROM applications 
-            ORDER BY submitted_date DESC
-        ''').fetchall()
+        cursor.execute('''
+            SELECT * FROM applications ORDER BY submitted_date DESC
+        ''')
+        applications = cursor.fetchall()
         
-        # Convert to list of dictionaries with guest count
         result = []
         for app in applications:
-            # Calculate guest counts from guest_details JSON
+            # Handle guest count
             guest_count = 0
             adult_count = 0
             child_count = 0
-            
             if app['guest_details']:
                 try:
                     guests = json.loads(app['guest_details'])
                     guest_count = len(guests)
-                    adult_count = len([g for g in guests if g.get('guest_type') == 'Adult'])
-                    child_count = len([g for g in guests if g.get('guest_type') == 'Child'])
-                except:
-                    guest_count = 0
+                    for g in guests:
+                        if g.get('guest_type') == 'Child':
+                            child_count += 1
+                        else:
+                            adult_count += 1
+                except: guest_count = 0
             
-            result.append({
-                'app_id': app['app_id'],
-                'applicant_name': app['applicant_name'] or 'N/A',
-                'mobile': app['mobile'] or 'N/A',
-                'from_date': app['from_date'] or 'N/A',
-                'to_date': app['to_date'] or 'N/A',
-                'rooms_required': app['rooms_required'] or 1,
-                'status': app['status'] or 'Pending',
-                'submitted_date': app['submitted_date'] or '',
-                'guest_count': guest_count,
-                'adult_count': adult_count,
-                'child_count': child_count,
-                'room_status': app['room_status'] or 'Booked',
-                'check_in_date': app['check_in_date'],
-                'check_out_date': app['check_out_date']
-            })
+            # Convert to regular dict for consistency
+            item = dict(app)
+            item['guest_count'] = guest_count
+            item['adult_count'] = adult_count
+            item['child_count'] = child_count
+            result.append(item)
         
         return result
-        
     except Exception as e:
-        print(f"❌ Error in get_all_applications: {e}")
+        print(f"❌ Error: {e}")
         return []
-    
     finally:
         conn.close()
-
-def get_pending_applications():
-    """Get pending applications"""
-    conn = get_db_connection()
-    applications = conn.execute('''
-        SELECT * FROM applications 
-        WHERE status='Pending' 
-        ORDER BY submitted_date
-    ''').fetchall()
-    conn.close()
-    return applications
 
 def get_application_by_id(app_id):
     """Get single application"""
     conn = get_db_connection()
-    application = conn.execute('''
-        SELECT * FROM applications WHERE app_id = ?
-    ''', (app_id,)).fetchone()
+    cursor = get_cursor(conn)
+    query = format_query("SELECT * FROM applications WHERE app_id = ?")
+    cursor.execute(query, (app_id,))
+    application = cursor.fetchone()
     conn.close()
-    
-    if application:
-        return dict(application)
-    return None
+    return dict(application) if application else None
 
 def update_application_status(app_id, status, approved_by='Admin'):
-    """Update application status"""
+    """Update status"""
     conn = get_db_connection()
-    conn.execute('''
+    cursor = get_cursor(conn)
+    query = format_query('''
         UPDATE applications 
         SET status=?, approved_by=?, approved_date=CURRENT_TIMESTAMP
         WHERE app_id=?
-    ''', (status, approved_by, app_id))
-    conn.commit()
-    conn.close()
-
-def delete_application(app_id):
-    """Delete application"""
-    conn = get_db_connection()
-    conn.execute('DELETE FROM applications WHERE app_id=?', (app_id,))
+    ''')
+    cursor.execute(query, (status, approved_by, app_id))
     conn.commit()
     conn.close()
 
 def verify_admin(username, password):
-    """Verify admin credentials"""
+    """Verify admin"""
     conn = get_db_connection()
+    cursor = get_cursor(conn)
     hashed = hashlib.sha256(password.encode()).hexdigest()
-    admin = conn.execute('''
-        SELECT * FROM admin WHERE username=? AND password=?
-    ''', (username, hashed)).fetchone()
+    query = format_query("SELECT * FROM admin WHERE username=? AND password=?")
+    cursor.execute(query, (username, hashed))
+    admin = cursor.fetchone()
     conn.close()
     return admin is not None
 
-# ==================== CHECK-IN / CHECK-OUT FUNCTIONS ====================
-
-def check_in_application(app_id, admin_name):
-    """Check-in application - Guest arrives"""
-    conn = get_db_connection()
-    
-    # Check if already checked in
-    current = conn.execute('''
-        SELECT room_status FROM applications WHERE app_id = ?
-    ''', (app_id,)).fetchone()
-    
-    if current and current['room_status'] == 'Occupied':
-        conn.close()
-        return False, "Already checked in!"
-    
-    conn.execute('''
-        UPDATE applications 
-        SET check_in_date = CURRENT_TIMESTAMP,
-            room_status = 'Occupied'
-        WHERE app_id = ?
-    ''', (app_id,))
-    conn.commit()
-    conn.close()
-    return True, "Checked in successfully!"
-
-def check_out_application(app_id):
-    """Check-out application - Guest leaves, room becomes vacant"""
-    conn = get_db_connection()
-    
-    # Check if already checked out
-    current = conn.execute('''
-        SELECT room_status FROM applications WHERE app_id = ?
-    ''', (app_id,)).fetchone()
-    
-    if current and current['room_status'] == 'Vacant':
-        conn.close()
-        return False, "Already checked out!"
-    
-    conn.execute('''
-        UPDATE applications 
-        SET check_out_date = CURRENT_TIMESTAMP,
-            room_status = 'Vacant'
-        WHERE app_id = ?
-    ''', (app_id,))
-    conn.commit()
-    conn.close()
-    return True, "Checked out successfully! Room is now vacant."
-
-def get_current_occupancy():
-    """Get currently occupied rooms"""
-    conn = get_db_connection()
-    occupied_rooms = conn.execute('''
-        SELECT * FROM applications 
-        WHERE room_status = 'Occupied'
-        AND check_out_date IS NULL
-        ORDER BY check_in_date DESC
-    ''').fetchall()
-    conn.close()
-    
-    result = []
-    for room in occupied_rooms:
-        result.append(dict(room))
-    return result
-
 def get_room_status_count():
-    """Get count of rooms by status based on total rooms"""
+    """Get count of rooms"""
     conn = get_db_connection()
+    cursor = get_cursor(conn)
     
-    # Total rooms fixed
     TOTAL_ROOMS = 250
     
-    # Occupied rooms (rooms with guests inside) - sum of rooms_required
-    occupied = conn.execute('''
-        SELECT SUM(rooms_required) as count FROM applications 
-        WHERE room_status = 'Occupied'
-    ''').fetchone()['count'] or 0
+    # Occupied
+    query_occ = format_query("SELECT SUM(rooms_required) FROM applications WHERE room_status = 'Occupied'")
+    cursor.execute(query_occ)
+    res = cursor.fetchone()
+    occupied = (res['sum'] if IS_POSTGRES else res[0]) or 0
     
-    # Booked rooms (approved but not checked in) - sum of rooms_required
-    booked = conn.execute('''
-        SELECT SUM(rooms_required) as count FROM applications 
-        WHERE status = 'Approved' 
-        AND (room_status = 'Booked' OR room_status IS NULL)
-    ''').fetchone()['count'] or 0
-    
-    # Vacant rooms = Total rooms - (Occupied + Booked)
-    vacant = TOTAL_ROOMS - (occupied + booked)
+    # Booked
+    query_book = format_query("SELECT SUM(rooms_required) FROM applications WHERE status = 'Approved' AND room_status = 'Booked'")
+    cursor.execute(query_book)
+    res = cursor.fetchone()
+    booked = (res['sum'] if IS_POSTGRES else res[0]) or 0
     
     conn.close()
     return {
-        'occupied': occupied,
-        'booked': booked,
-        'vacant': vacant
+        'occupied': int(occupied),
+        'booked': int(booked),
+        'vacant': TOTAL_ROOMS - (int(occupied) + int(booked))
     }
+
+def delete_application(app_id):
+    """Delete application"""
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    query = format_query("DELETE FROM applications WHERE app_id = ?")
+    cursor.execute(query, (app_id,))
+    conn.commit()
+    conn.close()
+
+def get_current_occupancy():
+    """Get all currently occupied rooms"""
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    
+    try:
+        cursor.execute('''
+            SELECT * FROM applications 
+            WHERE room_status = 'Occupied' 
+            ORDER BY check_in_date DESC
+        ''')
+        occupied = cursor.fetchall()
+        
+        result = []
+        for app in occupied:
+            guest_count = 0
+            adult_count = 0
+            child_count = 0
+            if app['guest_details']:
+                try:
+                    guests = json.loads(app['guest_details'])
+                    guest_count = len(guests)
+                    for g in guests:
+                        if g.get('guest_type') == 'Child':
+                            child_count += 1
+                        else:
+                            adult_count += 1
+                except: guest_count = 0
+            
+            item = dict(app)
+            item['guest_count'] = guest_count
+            item['adult_count'] = adult_count
+            item['child_count'] = child_count
+            result.append(item)
+            
+        return result
+    except Exception as e:
+        print(f"❌ Error fetching occupancy: {e}")
+        return []
+    finally:
+        conn.close()
+
+# Add other missing functions as needed...
+def check_in_application(app_id, admin_name):
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    query = format_query("UPDATE applications SET check_in_date = CURRENT_TIMESTAMP, room_status = 'Occupied' WHERE app_id = ?")
+    cursor.execute(query, (app_id,))
+    conn.commit()
+    conn.close()
+    return True, "Success"
+
+def check_out_application(app_id):
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    query = format_query("UPDATE applications SET check_out_date = CURRENT_TIMESTAMP, room_status = 'Vacant' WHERE app_id = ?")
+    cursor.execute(query, (app_id,))
+    conn.commit()
+    conn.close()
+    return True, "Success"

@@ -49,85 +49,13 @@ def get_csv_path():
     else:
         return os.path.join(os.getcwd(), 'hostel_data.csv')
 
-# 🔴 FORCE CREATE DATABASE AND ADMIN TABLE ON STARTUP
-def ensure_database():
-    """Ensure database and admin table exist"""
-    db_path = get_db_path()
-    print(f"📁 Ensuring database at: {db_path}")
-    
-    # Create directory if needed
-    db_dir = os.path.dirname(db_path)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-        print(f"📁 Created directory: {db_dir}")
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Create applications table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS applications (
-            app_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            applicant_name TEXT,
-            designation TEXT,
-            applicant_type TEXT,
-            mobile TEXT,
-            email TEXT,
-            purpose TEXT,
-            referred_by TEXT,
-            remarks TEXT,
-            guest_details TEXT DEFAULT '[]',
-            from_date TEXT,
-            to_date TEXT,
-            rooms_required INTEGER DEFAULT 1,
-            messing_required TEXT DEFAULT 'No',
-            billing_person TEXT,
-            signature TEXT,
-            status TEXT DEFAULT 'Pending',
-            submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            approved_by TEXT,
-            approved_date TIMESTAMP,
-            check_in_date TIMESTAMP,
-            check_out_date TIMESTAMP,
-            room_status TEXT DEFAULT 'Booked'
-        )
-    ''')
-    
-    # 🔴 CRITICAL: Create admin table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS admin (
-            admin_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            full_name TEXT,
-            email TEXT
-        )
-    ''')
-    
-    # 🔴 CRITICAL: Insert default admin if not exists
-    import hashlib
-    hashed = hashlib.sha256("admin123".encode()).hexdigest()
-    cursor.execute("SELECT * FROM admin WHERE username='admin'")
-    if not cursor.fetchone():
-        cursor.execute('''
-            INSERT INTO admin (username, password, full_name, email)
-            VALUES (?, ?, ?, ?)
-        ''', ('admin', hashed, 'Administrator', 'admin@diat.ac.in'))
-        print("✅ Default admin user created")
-    else:
-        print("✅ Admin user already exists")
-    
-    conn.commit()
-    conn.close()
-    print("✅ Database ensured")
-
-# 🔴 Call this BEFORE importing database module
-ensure_database()
-
 # Now import database module
 from database import *
 import database
 database.DB_NAME = get_db_path()
+
+# 🔴 Initialize database (works for SQLite or Postgres)
+init_database()
 
 # ==================== HELPER FUNCTION ====================
 def update_csv():
@@ -136,7 +64,7 @@ def update_csv():
         filepath = get_csv_path()
         print(f"📁 CSV path: {filepath}")
         
-        conn = sqlite3.connect(get_db_path())
+        conn = get_db_connection()
         
         if PANDAS_AVAILABLE:
             # Use pandas if available
@@ -461,7 +389,7 @@ def export_csv():
     try:
         filepath = get_csv_path()
         
-        conn = sqlite3.connect(get_db_path())
+        conn = get_db_connection()
         
         if PANDAS_AVAILABLE:
             df = pd.read_sql_query("SELECT * FROM applications ORDER BY submitted_date DESC", conn)
@@ -538,18 +466,19 @@ def add_bulk_data():
         types = ['Serving DRDO', 'Retired DRDO', 'Other Govt Emp.', 'Others']
         purposes = ['Research Meeting', 'Conference', 'Training Program', 'Workshop', 'Seminar']
         
-        conn = sqlite3.connect(get_db_path())
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         count = 0
         for i in range(10):
             status = 'Approved' if i < 5 else ('Pending' if i < 8 else 'Rejected')
-            cursor.execute('''
+            query = format_query('''
                 INSERT INTO applications (
                     applicant_name, applicant_type, mobile, email, purpose,
                     from_date, to_date, rooms_required, messing_required, status
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
+            ''')
+            cursor.execute(query, (
                 random.choice(names),
                 random.choice(types),
                 f'98{random.randint(10000000, 99999999)}',

@@ -209,8 +209,11 @@
                             <td>{{ room.to_date }}</td>
                             <td>{{ room.rooms_required }}</td>
                             <td>
-                                {% set guest_count = room.guest_details|default('[]') %}
-                                {{ guest_count.count('name') }}
+                                {% if room.guest_count > 0 %}
+                                    👨 {{ room.adult_count }} | 🧒 {{ room.child_count }}
+                                {% else %}
+                                    0
+                                {% endif %}
                             </td>
                             <td>
                                 <span class="room-status status-occupied">🟡 Occupied</span>
