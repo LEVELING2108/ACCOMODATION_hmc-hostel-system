@@ -1,5 +1,11 @@
 # 🏨 HMC Hostel Booking & Management System
 
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-2.2.5-000000?style=for-the-badge&logo=flask&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Ready-336791?style=for-the-badge&logo=postgresql&logoColor=white)
+![Power BI](https://img.shields.io/badge/Power_BI-Integrated-F2C811?style=for-the-badge&logo=powerbi&logoColor=black)
+![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+
 A professional, cloud-ready Flask web application designed for DIAT Pune to manage hostel registrations, guest check-ins, and real-time occupancy analytics.
 
 ---
