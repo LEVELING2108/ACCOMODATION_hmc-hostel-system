@@ -6,37 +6,36 @@ from datetime import datetime
 import os
 
 # 🔴 POSTGRESQL SUPPORT
-DATABASE_URL = os.environ.get('DATABASE_URL')
-IS_POSTGRES = DATABASE_URL is not None
-
-if IS_POSTGRES:
+try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
-    print("🐘 Using PostgreSQL Database")
+    POSTGRES_LIB_AVAILABLE = True
+except ImportError:
+    POSTGRES_LIB_AVAILABLE = False
+
+_raw_url = os.environ.get('DATABASE_URL')
+if _raw_url and _raw_url.startswith('postgres://'):
+    DATABASE_URL = _raw_url.replace('postgres://', 'postgresql://', 1)
 else:
-    print("📁 Using SQLite Database")
+    DATABASE_URL = _raw_url
 
-# 🔴 FIX FOR RENDER/LOCAL SQLITE
-def get_db_path():
-    """Get database path - works on Render and local"""
-    if os.environ.get('RENDER'):
-        return '/tmp/hostel_booking.db'
-    else:
-        return 'hostel_booking.db'
-
-DB_NAME = get_db_path()
+IS_POSTGRES = DATABASE_URL is not None
 
 def get_db_connection():
     """Create database connection (Postgres or SQLite)"""
-    if IS_POSTGRES:
-        # PostgreSQL Connection
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
-    else:
-        # SQLite Connection
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        return conn
+    try:
+        if IS_POSTGRES:
+            # PostgreSQL Connection (Fix for Render/Neon)
+            conn = psycopg2.connect(DATABASE_URL, sslmode='prefer')
+            return conn
+        else:
+            # SQLite Connection
+            conn = sqlite3.connect(DB_NAME)
+            conn.row_factory = sqlite3.Row
+            return conn
+    except Exception as e:
+        print(f"❌ DATABASE CONNECTION ERROR: {e}")
+        raise e
 
 def get_cursor(conn):
     """Get appropriate cursor"""
