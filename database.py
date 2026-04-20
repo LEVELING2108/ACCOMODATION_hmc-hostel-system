@@ -9,9 +9,9 @@ import os
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
-    POSTGRES_LIB_AVAILABLE = True
+    POSTGRES_AVAILABLE = True
 except ImportError:
-    POSTGRES_LIB_AVAILABLE = False
+    POSTGRES_AVAILABLE = False
 
 _raw_url = os.environ.get('DATABASE_URL')
 if _raw_url and _raw_url.startswith('postgres://'):
@@ -19,20 +19,16 @@ if _raw_url and _raw_url.startswith('postgres://'):
 else:
     DATABASE_URL = _raw_url
 
-IS_POSTGRES = DATABASE_URL is not None
+# Only use Postgres if both URL and Library are present
+IS_POSTGRES = DATABASE_URL is not None and POSTGRES_AVAILABLE
 
 def get_db_connection():
     """Create database connection (Postgres or SQLite)"""
     try:
         if IS_POSTGRES:
-            # PostgreSQL Connection (Fix for Render/Neon)
-            conn = psycopg2.connect(DATABASE_URL, sslmode='prefer')
-            return conn
+            return psycopg2.connect(DATABASE_URL, sslmode='prefer')
         else:
-            # SQLite Connection
-            conn = sqlite3.connect(DB_NAME)
-            conn.row_factory = sqlite3.Row
-            return conn
+            return sqlite3.connect(DB_NAME)
     except Exception as e:
         print(f"❌ DATABASE CONNECTION ERROR: {e}")
         raise e
@@ -42,6 +38,7 @@ def get_cursor(conn):
     if IS_POSTGRES:
         return conn.cursor(cursor_factory=RealDictCursor)
     else:
+        conn.row_factory = sqlite3.Row
         return conn.cursor()
 
 def format_query(query):
@@ -52,11 +49,16 @@ def format_query(query):
 
 def init_database():
     """Initialize database tables"""
-    conn = get_db_connection()
-    cursor = get_cursor(conn)
+    try:
+        conn = get_db_connection()
+        cursor = get_cursor(conn)
+    except Exception as e:
+        print(f"⚠️ Could not connect to DB for init: {e}")
+        return
     
-    # Use SERIAL for Postgres, AUTOINCREMENT for SQLite
-    id_type = "SERIAL PRIMARY KEY" if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    try:
+        # Use SERIAL for Postgres, AUTOINCREMENT for SQLite
+        id_type = "SERIAL PRIMARY KEY" if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
     text_type = "TEXT"
     timestamp_type = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
     
@@ -226,6 +228,12 @@ def get_all_applications():
             item['guest_count'] = guest_count
             item['adult_count'] = adult_count
             item['child_count'] = child_count
+            
+            # 🔴 CRITICAL: Convert datetime objects to strings for PostgreSQL
+            for key, value in item.items():
+                if isinstance(value, datetime):
+                    item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+            
             result.append(item)
         
         return result

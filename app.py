@@ -55,7 +55,11 @@ import database
 database.DB_NAME = get_db_path()
 
 # 🔴 Initialize database (works for SQLite or Postgres)
-init_database()
+try:
+    init_database()
+    print("✅ Database initialization complete")
+except Exception as e:
+    print(f"⚠️ Database initialization failed: {e}")
 
 # ==================== HELPER FUNCTION ====================
 def update_csv():
